@@ -24,6 +24,11 @@ from pathlib import Path
 from typing import Optional
 import typer
 
+# Lazy import of IdeaStatus for pipeline command
+def _get_idea_status():
+    from lab.core.models import IdeaStatus
+    return IdeaStatus
+
 # Ensure project root on path
 _root = Path(__file__).parent.parent
 if str(_root) not in sys.path:
@@ -265,18 +270,98 @@ def pipeline(
     print(f"  {c('Idea:', DIM)} {c(idea_id, BOLD)}")
     print(hr())
 
+    orchestrator = get_orchestrator()
+
     # Load idea from workspace
-    workspace_root = Path("workspace/ideas") / idea_id
-    if not workspace_root.exists():
-        typer.echo(c(f"\n  ✗ Idea workspace not found: {workspace_root}\n", RED))
+    idea = orchestrator.workspace.load_idea(idea_id)
+    if not idea:
+        typer.echo(c(f"\n  ✗ Idea not found: {idea_id}\n  Run 'vlab sessions' to list ideas.\n", RED))
         raise typer.Exit(1)
 
-    typer.echo(f"\n  {c('Pipeline phases:', DIM)}")
-    phases = [
-        "research-refine", "experiment-plan", "experiment-bridge",
-        "paper-write", "auto-review", "citation-audit", "claim-audit"
-    ]
-    for p in phases:
+    stage = orchestrator.workspace.get_pipeline_stage(idea)
+    typer.echo(f"  {c('Current stage:', DIM)} {c(stage, BYELLOW)}")
+    typer.echo(f"  {c('Status:', DIM)} {c(idea.status.value, BCYAN)}")
+
+    if stage == "experiments_done":
+        typer.echo(f"\n  {c('Results detected.', BGREEN)} Resuming from paper-write phase.")
+    elif stage == "bridge_done":
+        typer.echo(f"\n  {c('⚠ Waiting for experiments.', BYELLOW)}")
+        typer.echo(f"  Run experiments in: {idea.workspace_dir}/experiments/")
+        typer.echo(f"  Then run: {c('vlab pipeline ' + idea_id, BCYAN)} again to resume.\n")
+        raise typer.Exit(0)
+
+    with Spinner(f"Running pipeline from stage: {stage}", BMAGENTA):
+        result_idea, paper = asyncio.run(orchestrator.run_pipeline(idea))
+
+    if paper is None:
+        IdeaStatus = _get_idea_status()
+        if result_idea.status == IdeaStatus.RUNNING:
+            typer.echo(f"\n  {c('Pipeline paused.', BYELLOW)} Run experiments then resume.")
+            typer.echo(f"  Experiments dir: {result_idea.workspace_dir}/experiments/")
+        else:
+            typer.echo(c(f"\n  ✗ Pipeline failed at stage: {result_idea.status.value}\n", RED))
+        raise typer.Exit(0)
+
+    status_color = BGREEN if result_idea.status == IdeaStatus.READY else BYELLOW
+    typer.echo(f"\n  {c('Status:', DIM)} {c(result_idea.status.value, status_color)}")
+    if paper:
+        typer.echo(f"  {c('Paper:', DIM)} {c(paper.title, BOLD)}")
+        typer.echo(f"  {c('Review scores:', DIM)} " +
+                   ", ".join(f"{k}: {v:.0f}" for k, v in paper.review_scores.items()))
+    typer.echo(f"  {c('Workspace:', DIM)} {c(result_idea.workspace_dir, DIM)}\n")
+
+
+@app.command()
+def resume(
+    idea_id: str = typer.Argument(..., help="Idea ID to resume"),
+):
+    """Resume pipeline for an idea (e.g. after running experiments)."""
+    print_header()
+    print(f"  {c('Resuming pipeline for:', DIM)} {c(idea_id, BOLD)}")
+    print(hr())
+
+    orchestrator = get_orchestrator()
+
+    with Spinner(f"Resuming pipeline: {idea_id}", BMAGENTA):
+        idea, paper = asyncio.run(orchestrator.resume_pipeline(idea_id))
+
+    if idea is None:
+        typer.echo(c(f"\n  ✗ Idea not found: {idea_id}\n", RED))
+        raise typer.Exit(1)
+
+    typer.echo(f"\n  {c('Status:', DIM)} {c(idea.status.value, BGREEN)}")
+    if paper:
+        typer.echo(f"  {c('Paper:', DIM)} {c(paper.title, BOLD)}")
+    typer.echo(f"  {c('Workspace:', DIM)} {c(idea.workspace_dir, DIM)}\n")
+
+
+@app.command()
+def ideas(
+    domain: str = typer.Option("", "--domain", "-d", help="Filter by domain"),
+    status: str = typer.Option("", "--status", "-s", help="Filter by status"),
+):
+    """List all ideas across all sessions."""
+    orchestrator = get_orchestrator()
+    all_ideas = orchestrator.workspace.list_ideas(status_filter=status or None)
+
+    if domain:
+        all_ideas = [i for i in all_ideas if domain.lower() in i.get("domain", "").lower()]
+
+    if not all_ideas:
+        typer.echo(c("\n  No ideas found.\n", DIM))
+        return
+
+    print_header()
+    print(f"  {c('All Ideas', BOLD)}  {c(f'({len(all_ideas)} total)', DIM)}")
+    print(hr())
+
+    for idea in all_ideas:
+        print_idea(idea, 0)
+        typer.echo(f"     {c('Stage:', DIM)} {c(idea.get('stage', '?'), BCYAN)}  "
+                   f"{c('ID:', DIM)} {c(idea.get('id', '?'), DIM)}")
+
+    print(hr())
+    print()
         typer.echo(f"    {c('·', DIM)} {p}")
     typer.echo(f"\n  {c('Note:', BYELLOW)} Experiments must be run manually after experiment-bridge.\n")
 
