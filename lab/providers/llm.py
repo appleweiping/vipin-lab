@@ -1,10 +1,63 @@
-"""LLM provider — routes to Anthropic or OpenAI, handles retries."""
+"""LLM provider — routes to Anthropic or OpenAI, handles retries.
+
+Vision support:
+  Pass image content blocks in messages using Anthropic format:
+    {"role": "user", "content": [
+        {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": "<b64>"}},
+        {"type": "text", "text": "What is in this image?"}
+    ]}
+
+  Helper: build_image_block(path) → dict  (reads file, returns content block)
+"""
 from __future__ import annotations
 import asyncio
+import base64
+import mimetypes
 import os
+from pathlib import Path
 from typing import Any
 import httpx
 from ..core.config import LabConfig, ModelProfile
+
+
+def build_image_block(path: str | Path) -> dict:
+    """
+    Read an image file and return an Anthropic vision content block.
+
+    Supports: JPEG, PNG, GIF, WEBP.
+    Raises ValueError for unsupported types or missing files.
+    """
+    p = Path(path)
+    if not p.exists():
+        raise ValueError(f"Image not found: {path}")
+    mime, _ = mimetypes.guess_type(str(p))
+    supported = {"image/jpeg", "image/png", "image/gif", "image/webp"}
+    if mime not in supported:
+        raise ValueError(f"Unsupported image type: {mime}. Supported: jpeg, png, gif, webp")
+    data = base64.standard_b64encode(p.read_bytes()).decode("ascii")
+    return {
+        "type": "image",
+        "source": {
+            "type": "base64",
+            "media_type": mime,
+            "data": data,
+        },
+    }
+
+
+def _normalize_messages(messages: list[dict]) -> list[dict]:
+    """
+    Ensure all messages have a 'content' field that is either a string or a list.
+    Passes through already-structured content blocks unchanged.
+    """
+    out = []
+    for msg in messages:
+        content = msg.get("content", "")
+        if isinstance(content, (str, list)):
+            out.append(msg)
+        else:
+            out.append({**msg, "content": str(content)})
+    return out
 
 
 class LLMProvider:
@@ -19,7 +72,12 @@ class LLMProvider:
         max_tokens: int = 8192,
         system: str | None = None,
     ) -> str:
-        """Send a completion request. Returns response text."""
+        """Send a completion request. Returns response text.
+
+        Messages may contain vision content blocks (Anthropic format).
+        For OpenAI-compatible providers, image blocks are silently stripped
+        since vision support varies by model.
+        """
         if model.provider == "anthropic":
             return await self._anthropic(model, messages, temperature, max_tokens, system)
         elif model.provider in ("openai", "openrouter"):
@@ -41,7 +99,7 @@ class LLMProvider:
         }
         payload: dict[str, Any] = {
             "model": model.id,
-            "messages": messages,
+            "messages": _normalize_messages(messages),
             "max_tokens": max_tokens,
             "temperature": temperature,
         }
@@ -86,7 +144,18 @@ class LLMProvider:
         all_messages = []
         if system:
             all_messages.append({"role": "system", "content": system})
-        all_messages.extend(messages)
+        # Strip image blocks for OpenAI-compatible providers (flatten to text)
+        for msg in messages:
+            content = msg.get("content", "")
+            if isinstance(content, list):
+                text_parts = [
+                    block.get("text", "")
+                    for block in content
+                    if block.get("type") == "text"
+                ]
+                all_messages.append({**msg, "content": " ".join(text_parts)})
+            else:
+                all_messages.append(msg)
 
         for attempt in range(3):
             try:

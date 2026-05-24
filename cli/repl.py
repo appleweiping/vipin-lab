@@ -23,6 +23,24 @@ Slash commands for power users:
   /help
   /clear
   /quit
+
+  /todo add <text> [--high|--low]
+  /todo done <id>
+  /todo start <id>
+  /todo remove <id>
+  /todo clear [all]
+  /todo list [pending|done|all]
+
+  /monitor start <cmd>
+  /monitor stop <id>
+  /monitor logs <id> [n]
+  /monitor list
+  /monitor clear
+
+  /mode auto|plan|ask
+
+  /image <path>
+  /images
 """
 from __future__ import annotations
 import asyncio
@@ -38,6 +56,10 @@ import itertools
 import readline as _rl  # enables history + line editing on Unix
 from pathlib import Path
 from typing import Callable, Awaitable
+
+# New feature modules
+from .todo import handle_todo_command
+from .monitor import handle_monitor_command
 
 # ── ANSI palette ──────────────────────────────────────────────────────────────
 R = "\033[0m"; BOLD = "\033[1m"; DIM = "\033[2m"; ITALIC = "\033[3m"
@@ -158,6 +180,28 @@ class IntentParser:
         # help
         (r"(?:help|what can you do|commands?|how do i)",
          "help", None),
+
+        # ── New features ──────────────────────────────────────────────────────
+
+        # todo — natural language
+        (r"(?:add|create)\s+(?:a\s+)?(?:task|todo|item)\s+(.+)",
+         "todo_add", 1),
+        (r"(?:show|list|display)\s+(?:my\s+)?(?:todos?|tasks?|to.?do list)",
+         "todo_list", None),
+        (r"(?:mark|set)\s+(?:task\s+)?([a-f0-9]{4,})\s+(?:as\s+)?done",
+         "todo_done", 1),
+
+        # monitor — natural language
+        (r"(?:monitor|watch|run in background)\s+(.+)",
+         "monitor_start", 1),
+        (r"(?:show|list)\s+(?:active\s+)?monitors?",
+         "monitor_list", None),
+
+        # mode — natural language
+        (r"(?:switch to|use|set)\s+(?:mode\s+)?(auto|plan|ask)\s+mode",
+         "mode", 1),
+        (r"(?:enable|activate)\s+(auto|plan|ask)\s+mode",
+         "mode", 1),
     ]
 
     def parse(self, text: str) -> tuple[str, dict]:
@@ -215,6 +259,12 @@ class IntentParser:
             "quit":     ("quit",     {}),
             "exit":     ("quit",     {}),
             "q":        ("quit",     {}),
+            # New commands
+            "todo":     ("todo",     {"arg1": " ".join(parts[1:]) if len(parts) > 1 else ""}),
+            "monitor":  ("monitor",  {"arg1": " ".join(parts[1:]) if len(parts) > 1 else ""}),
+            "mode":     ("mode",     {"arg1": parts[1].lower() if len(parts) > 1 else ""}),
+            "image":    ("image",    {"arg1": parts[1] if len(parts) > 1 else ""}),
+            "images":   ("images",   {}),
         }
         return mapping.get(name, ("unknown", {"raw": cmd}))
 
@@ -320,6 +370,23 @@ HELP_TEXT = f"""
   {c('run pipeline on idea abc12345', CYAN)}
   {c('resume abc12345', CYAN)}
 
+  {c('Todo List', BOLD, BYELLOW)}
+  {c('/todo add <text> [--high|--low]', CYAN)}   {c('/todo done <id>', CYAN)}   {c('/todo start <id>', CYAN)}
+  {c('/todo remove <id>', CYAN)}                  {c('/todo clear [all]', CYAN)} {c('/todo list [pending|done|all]', CYAN)}
+
+  {c('Monitor', BOLD, BYELLOW)}
+  {c('/monitor start <cmd>', CYAN)}   {c('/monitor stop <id>', CYAN)}   {c('/monitor logs <id> [n]', CYAN)}
+  {c('/monitor list', CYAN)}          {c('/monitor clear', CYAN)}
+
+  {c('Mode', BOLD, BYELLOW)}
+  {c('/mode auto', CYAN)}  {c('— run freely (default)', DIM)}
+  {c('/mode plan', CYAN)}  {c('— print plan before each pipeline step, wait for confirmation', DIM)}
+  {c('/mode ask', CYAN)}   {c('— confirm each phase individually', DIM)}
+
+  {c('Images', BOLD, BYELLOW)}
+  {c('/image <path>', CYAN)}   {c('— attach image to next message', DIM)}
+  {c('/images', CYAN)}         {c('— list attached images', DIM)}
+
   {c('Slash Commands', BOLD, BYELLOW)}
   {c('/discover <domain>', CYAN)}   {c('/extend <domain>', CYAN)}   {c('/transfer <src> <tgt>', CYAN)}
   {c('/pipeline <id>', CYAN)}       {c('/resume <id>', CYAN)}       {c('/ideas', CYAN)}
@@ -330,12 +397,37 @@ HELP_TEXT = f"""
 """
 
 
+def _pipeline_stages_from(current_stage: str) -> list[str]:
+    """Return remaining pipeline stage descriptions starting from current_stage."""
+    all_stages = [
+        ("kill_first",       "Run kill-first adversarial test"),
+        ("refine",           "Refine idea based on kill-first feedback"),
+        ("experiment_plan",  "Generate experiment plan"),
+        ("bridge",           "Build code bridge / scaffold"),
+        ("bridge_done",      "Waiting for experiment results"),
+        ("paper_write",      "Write paper draft"),
+        ("review",           "Run automated review"),
+    ]
+    found = False
+    result = []
+    for stage_key, desc in all_stages:
+        if stage_key == current_stage:
+            found = True
+        if found:
+            result.append(desc)
+    return result if result else [f"Run stage: {current_stage}"]
+
+
 # ── REPL ──────────────────────────────────────────────────────────────────────
 class VlabREPL:
     def __init__(self):
         self.parser = IntentParser()
         self.orchestrator = None
         self._history: list[str] = []
+        # Mode: "auto" | "plan" | "ask"
+        self._mode: str = "auto"
+        # Pending images to attach to next LLM call
+        self._pending_images: list[str] = []
         self._setup_readline()
 
     def _setup_readline(self):
@@ -347,9 +439,12 @@ class VlabREPL:
             _rl.set_history_length(500)
 
             # Tab completion for slash commands
-            slash_cmds = ["/discover", "/extend", "/transfer", "/pipeline",
-                          "/resume", "/ideas", "/sessions", "/status",
-                          "/help", "/clear", "/quit"]
+            slash_cmds = [
+                "/discover", "/extend", "/transfer", "/pipeline",
+                "/resume", "/ideas", "/sessions", "/status",
+                "/help", "/clear", "/quit",
+                "/todo", "/monitor", "/mode", "/image", "/images",
+            ]
 
             def completer(text, state):
                 options = [c for c in slash_cmds if c.startswith(text)]
@@ -396,6 +491,25 @@ class VlabREPL:
         orch = self._get_orchestrator()
         if not orch:
             return
+
+        # Plan mode: show plan before running
+        if self._mode == "plan":
+            steps = [
+                f"Query Semantic Scholar for recent papers in {c(domain, BOLD)}",
+                "Extract phenomena and anomalies from abstracts",
+                "Generate research ideas from detected phenomena",
+                "Score ideas by novelty and feasibility",
+                "Run kill-first adversarial test on top ideas",
+            ]
+            if not await self._confirm_plan(steps, f"Discover: {domain}"):
+                print(f"  {c('Cancelled.', DIM)}\n")
+                return
+
+        # Ask mode: confirm each phase
+        if not await self._confirm_phase("query Semantic Scholar"):
+            print(f"  {c('Cancelled.', DIM)}\n")
+            return
+
         print(f"\n  {c('🔬 Discovering phenomena in', DIM)} {c(domain, BOLD)}")
         print(hr("·"))
         with Spinner(f"Scanning {domain}", BMAGENTA) as sp:
@@ -416,6 +530,23 @@ class VlabREPL:
         orch = self._get_orchestrator()
         if not orch:
             return
+
+        if self._mode == "plan":
+            steps = [
+                f"Analyze current method: {c(method[:50], BOLD)}",
+                f"Identify extension opportunities in {c(domain, BOLD)}",
+                "Generate follow-up research ideas",
+                "Score and rank by novelty + feasibility",
+                "Run kill-first test on top ideas",
+            ]
+            if not await self._confirm_plan(steps, f"Extend: {domain}"):
+                print(f"  {c('Cancelled.', DIM)}\n")
+                return
+
+        if not await self._confirm_phase("generate extension ideas"):
+            print(f"  {c('Cancelled.', DIM)}\n")
+            return
+
         print(f"\n  {c('🔗 Generating extension ideas for', DIM)} {c(domain, BOLD)}")
         print(hr("·"))
         with Spinner("Generating extension ideas", BMAGENTA):
@@ -435,6 +566,23 @@ class VlabREPL:
         orch = self._get_orchestrator()
         if not orch:
             return
+
+        if self._mode == "plan":
+            steps = [
+                f"Analyze methods and techniques in {c(source, BOLD)}",
+                f"Identify structural analogies to {c(target, BOLD)}",
+                "Generate transfer hypotheses",
+                "Score analogies by confidence and novelty",
+                "Run kill-first test on top transfer ideas",
+            ]
+            if not await self._confirm_plan(steps, f"Transfer: {source} → {target}"):
+                print(f"  {c('Cancelled.', DIM)}\n")
+                return
+
+        if not await self._confirm_phase("find analogies"):
+            print(f"  {c('Cancelled.', DIM)}\n")
+            return
+
         print(f"\n  {c('⚡ Transferring', DIM)} {c(source, BOLD)} {c('→', DIM)} {c(target, BOLD)}")
         print(hr("·"))
         with Spinner(f"Finding analogies: {source} → {target}", BMAGENTA):
@@ -463,6 +611,17 @@ class VlabREPL:
             print(f"  Place results in: {c(idea.workspace_dir + '/experiments/results/', DIM)}")
             print(f"  Then type: {c('resume ' + idea_id[:8], BCYAN)}\n")
             return
+
+        if self._mode == "plan":
+            remaining_stages = _pipeline_stages_from(stage)
+            if not await self._confirm_plan(remaining_stages, f"Pipeline: {idea.title[:50]}"):
+                print(f"  {c('Cancelled.', DIM)}\n")
+                return
+
+        if not await self._confirm_phase(f"run pipeline stage: {stage}"):
+            print(f"  {c('Cancelled.', DIM)}\n")
+            return
+
         with Spinner("Running pipeline", BMAGENTA) as sp:
             sp.update(f"stage: {stage}")
             result_idea, paper = await orch.run_pipeline(idea)
@@ -565,7 +724,107 @@ class VlabREPL:
         n = len(list(ws.glob("*/session.json"))) if ws.exists() else 0
         print(f"\n  {c('Workspace:', DIM)} {ws.absolute()}")
         print(f"  {c('Sessions:', DIM)} {n}")
+        print(f"  {c('Mode:', DIM)} {c(self._mode, BCYAN)}")
         print()
+
+    # ── New feature handlers ──────────────────────────────────────────────────
+
+    def _handle_mode(self, args: dict):
+        """Switch REPL mode: auto | plan | ask."""
+        mode = args.get("arg1", "").strip().lower()
+        valid = {"auto", "plan", "ask"}
+        if mode not in valid:
+            print(f"\n  {c('Usage:', DIM)} /mode auto|plan|ask")
+            print(f"  {c('Current mode:', DIM)} {c(self._mode, BCYAN)}\n")
+            return
+        self._mode = mode
+        descriptions = {
+            "auto": "run freely — no confirmation required",
+            "plan": "print a numbered plan before each pipeline step and wait for y/N",
+            "ask":  "confirm each phase (kill-first, refine, experiment-plan, …) individually",
+        }
+        print(f"\n  {c('Mode:', DIM)} {c(mode, BCYAN)}  {c(descriptions[mode], DIM)}\n")
+
+    async def _confirm_plan(self, steps: list[str], title: str = "Plan") -> bool:
+        """
+        In plan mode: print a numbered plan and ask for confirmation.
+        Returns True if user confirms, False otherwise.
+        """
+        if self._mode == "auto":
+            return True
+        print(f"\n  {c(title, BOLD, BYELLOW)}")
+        print(hr("·"))
+        for i, step in enumerate(steps, 1):
+            print(f"  {c(str(i) + '.', DIM)} {step}")
+        print()
+        try:
+            answer = input(f"  {c('Proceed?', BOLD)} {c('[y/N]', DIM)} ").strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            return False
+        return answer in ("y", "yes")
+
+    async def _confirm_phase(self, phase: str) -> bool:
+        """
+        In ask mode: confirm a single phase before executing.
+        Returns True if user confirms, False otherwise.
+        """
+        if self._mode not in ("ask",):
+            return True
+        try:
+            answer = input(
+                f"  {c('Run phase:', DIM)} {c(phase, BCYAN)}  {c('[y/N]', DIM)} "
+            ).strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            return False
+        return answer in ("y", "yes")
+
+    def _handle_image(self, args: dict):
+        """Attach an image to the next LLM message."""
+        path = args.get("arg1", "").strip()
+        if not path:
+            print(f"  {c('Usage:', DIM)} /image <path>")
+            return
+        p = Path(path)
+        if not p.exists():
+            print(f"  {c('✗ File not found:', BRED)} {path}")
+            return
+        self._pending_images.append(str(p.resolve()))
+        print(f"  {c('✓ Image attached:', BGREEN)} {p.name}  "
+              f"{c(f'({len(self._pending_images)} pending)', DIM)}")
+
+    def _handle_images(self):
+        """List currently attached images."""
+        if not self._pending_images:
+            print(f"  {c('No images attached.', DIM)}")
+            return
+        print(f"\n  {c('Attached images', BOLD)}  {c(f'({len(self._pending_images)})', DIM)}")
+        for i, p in enumerate(self._pending_images, 1):
+            print(f"  {c(str(i) + '.', DIM)} {p}")
+        print()
+
+    def _build_message_with_images(self, text: str) -> dict:
+        """
+        Build a user message dict. If images are pending, include them as
+        Anthropic vision content blocks and clear the pending list.
+        """
+        if not self._pending_images:
+            return {"role": "user", "content": text}
+        try:
+            from lab.providers.llm import build_image_block
+        except ImportError:
+            # Fallback: just send text
+            self._pending_images.clear()
+            return {"role": "user", "content": text}
+
+        content: list[dict] = []
+        for img_path in self._pending_images:
+            try:
+                content.append(build_image_block(img_path))
+            except ValueError as e:
+                print(c(f"\n  ✗ Image error: {e}\n", BRED))
+        content.append({"type": "text", "text": text})
+        self._pending_images.clear()
+        return {"role": "user", "content": content}
 
     async def _dispatch(self, intent: str, args: dict):
         """Route intent to handler."""
@@ -592,6 +851,30 @@ class VlabREPL:
             print_banner()
         elif intent == "quit":
             raise KeyboardInterrupt
+        # ── New features ──────────────────────────────────────────────────────
+        elif intent == "todo":
+            print(handle_todo_command(args.get("arg1", "")))
+        elif intent == "todo_add":
+            print(handle_todo_command("add " + args.get("arg1", "")))
+        elif intent == "todo_list":
+            print(handle_todo_command("list"))
+        elif intent == "todo_done":
+            print(handle_todo_command("done " + args.get("arg1", "")))
+        elif intent == "monitor":
+            result = await handle_monitor_command(args.get("arg1", ""))
+            print(result)
+        elif intent == "monitor_start":
+            result = await handle_monitor_command("start " + args.get("arg1", ""))
+            print(result)
+        elif intent == "monitor_list":
+            result = await handle_monitor_command("list")
+            print(result)
+        elif intent == "mode":
+            self._handle_mode(args)
+        elif intent == "image":
+            self._handle_image(args)
+        elif intent == "images":
+            self._handle_images()
         else:
             raw = args.get("raw", "")
             print(f"\n  {c('?', BYELLOW)} I didn't understand: {c(raw[:60], DIM)}")
