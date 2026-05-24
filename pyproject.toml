@@ -1,6 +1,6 @@
 [project]
 name = "vipin-lab"
-version = "1.0.0"
+version = "1.2.0"
 description = "Autonomous research lab: phenomenon-driven discovery, cross-domain transfer, kill-first ideation, evidence-gated pipeline"
 requires-python = ">=3.11"
 dependencies = [
@@ -21,10 +21,12 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8.0", "ruff>=0.6", "mypy>=1.11"]
+dev = ["pytest>=8.0", "ruff>=0.6", "mypy>=1.11", "pytest-asyncio>=0.23"]
+viz = ["matplotlib>=3.8", "seaborn>=0.13", "plotly>=5.18"]
+latex = ["pylatexenc>=2.10"]
 
 [project.scripts]
-vlab = "cli.main:app"
+vlab = "cli.main:main"
 
 [build-system]
 requires = ["setuptools>=75.0"]
@@ -32,3 +34,7 @@ build-backend = "setuptools.build_meta"
 
 [tool.ruff]
 line-length = 100
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]

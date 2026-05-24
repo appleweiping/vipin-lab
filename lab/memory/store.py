@@ -2,16 +2,10 @@
 Memory Layer — cross-session learning and institutional knowledge.
 
 Inspired by AgentLaboratory's AgentRxiv: agents build on prior work.
-
-Tracks:
-- Which ideas survived kill-first and why
-- Which ideas failed at which phase and why
-- Which phenomena led to successful papers
-- Which analogies were productive
-- Domain-specific lessons (what works in LLM4Rec, etc.)
 """
 from __future__ import annotations
 import json
+import dataclasses
 from datetime import datetime
 from pathlib import Path
 from dataclasses import dataclass, field
@@ -186,7 +180,11 @@ class LabMemory:
 
     def _save(self, path: Path, data: list):
         path.write_text(
-            json.dumps([d.__dict__ if hasattr(d, "__dict__") else d for d in data],
-                       indent=2, ensure_ascii=False),
+            json.dumps(
+                [dataclasses.asdict(d) if dataclasses.is_dataclass(d) else d for d in data],
+                indent=2,
+                ensure_ascii=False,
+                default=str,  # handles datetime and other non-serializable types
+            ),
             encoding="utf-8",
         )

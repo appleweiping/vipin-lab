@@ -112,7 +112,7 @@ class ResearchRefine:
         Returns (updated_idea, passed).
         Writes outputs to idea.workspace_dir.
         """
-        workspace = Path(idea.workspace_dir) if idea.workspace_dir else None
+        workspace = Path(idea.workspace_dir) if (idea.workspace_dir and idea.workspace_dir.strip()) else None
         if workspace:
             workspace.mkdir(parents=True, exist_ok=True)
 

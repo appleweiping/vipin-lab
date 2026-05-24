@@ -119,6 +119,13 @@ class LabOrchestrator:
         kill_results = await asyncio.gather(
             *[self.kill_first.evaluate(idea) for idea in novel_ideas]
         )
+        # Mark surviving ideas as KILL_TESTED, killed ones as KILLED
+        for idea, survived in kill_results:
+            if survived:
+                idea.status = IdeaStatus.KILL_TESTED
+            else:
+                idea.status = IdeaStatus.KILLED
+
         session.ideas = [idea for idea, _ in kill_results] + [
             i for i in ideas if i.status == IdeaStatus.KILLED
         ]

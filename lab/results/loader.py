@@ -35,6 +35,14 @@ class ResultLoader:
         if not self.results_dir.exists():
             return False, [f"Results directory not found: {self.results_dir}"]
 
+        # Check if directory is empty
+        result_files = list(self.results_dir.glob("*.json"))
+        if not result_files:
+            return False, [
+                f"Results directory exists but is empty: {self.results_dir}",
+                "Run experiments first, then place results/*.json files here.",
+            ]
+
         warnings = []
         any_loaded = False
 

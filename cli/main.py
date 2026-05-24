@@ -362,8 +362,6 @@ def ideas(
 
     print(hr())
     print()
-        typer.echo(f"    {c('·', DIM)} {p}")
-    typer.echo(f"\n  {c('Note:', BYELLOW)} Experiments must be run manually after experiment-bridge.\n")
 
 
 @app.command()

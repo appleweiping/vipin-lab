@@ -20,6 +20,9 @@ from ..core.models import Idea, Phenomenon
 from ..core.config import LabConfig
 from ..providers.llm import LLMProvider
 from ..providers.literature import LiteratureProvider
+# Import at module level to avoid hiding dependencies
+from ..phases.p1_ideation import IdeaGenerator
+from ..engines.kill_first import KillFirstEngine
 
 
 @dataclass
@@ -90,10 +93,6 @@ class IdeaBeamSearch:
         Run beam search over hypothesis space.
         Returns top-k ideas after beam_width * max_depth exploration.
         """
-        from ..phases.p1_ideation import IdeaGenerator
-        from ..engines.kill_first import KillFirstEngine
-        import uuid
-
         ideator = IdeaGenerator(self.config, self.llm, self.lit)
         kill_engine = KillFirstEngine(self.config, self.llm, self.lit)
 

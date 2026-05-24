@@ -164,17 +164,24 @@ Output JSON:
             max_tokens=1024,
         )
         scores = self._parse_json(response)
+        # Default to failing scores if parse fails — never approve on empty response
+        _DIMS = ("Evidence", "Rigor", "Gates", "Feasibility", "Paper-potential")
         if not scores:
-            return {}
+            plan.audit_scores = {d: 0.0 for d in _DIMS}
+            plan.approved = False
+            return plan.audit_scores
 
         plan.audit_scores = {
             k: float(v) for k, v in scores.items()
-            if k in ("Evidence", "Rigor", "Gates", "Feasibility", "Paper-potential")
+            if k in _DIMS
         }
-        plan.approved = scores.get("verdict") == "approved" and all(
+        # Require BOTH LLM verdict AND all scores ≥ threshold
+        llm_approved = scores.get("verdict") == "approved"
+        scores_pass = bool(plan.audit_scores) and all(
             v >= self.config.min_experiment_audit_score
             for v in plan.audit_scores.values()
         )
+        plan.approved = llm_approved and scores_pass
         return plan.audit_scores
 
     async def extract_claims(self, paper: Paper) -> list[Claim]:
