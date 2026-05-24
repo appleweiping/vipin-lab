@@ -184,7 +184,38 @@ class LabMemory:
                 [dataclasses.asdict(d) if dataclasses.is_dataclass(d) else d for d in data],
                 indent=2,
                 ensure_ascii=False,
-                default=str,  # handles datetime and other non-serializable types
+                default=str,
             ),
             encoding="utf-8",
         )
+
+    def save_to_agentmemory(self, session_summary: dict) -> bool:
+        """Post session summary to agentmemory API. Falls back to markdown file."""
+        import os, httpx, asyncio
+        agentmemory_url = os.environ.get("AGENTMEMORY_URL", "http://localhost:3111")
+        try:
+            async def _post():
+                async with httpx.AsyncClient(timeout=5.0) as c:
+                    r = await c.post(
+                        f"{agentmemory_url}/observations",
+                        json={"content": json.dumps(session_summary, ensure_ascii=False), "type": "vlab_session"},
+                    )
+                    return r.status_code < 300
+            return asyncio.run(_post())
+        except Exception:
+            pass
+        # Fallback: write to shared markdown memory
+        try:
+            from datetime import date
+            mem_dir = Path(r"D:\research\Vipin's Knowledgebase\memory\sessions")
+            mem_dir.mkdir(parents=True, exist_ok=True)
+            fname = mem_dir / f"vlab-{date.today().isoformat()}.md"
+            lines = [f"# vlab session {date.today().isoformat()}\n"]
+            for k, v in session_summary.items():
+                lines.append(f"**{k}**: {v}\n")
+            with open(fname, "a", encoding="utf-8") as f:
+                f.write("\n".join(lines) + "\n---\n")
+            return True
+        except Exception:
+            return False
+

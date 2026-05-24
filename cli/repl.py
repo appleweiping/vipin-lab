@@ -53,7 +53,10 @@ import textwrap
 import time
 import threading
 import itertools
-import readline as _rl  # enables history + line editing on Unix
+try:
+    import readline as _rl  # enables history + line editing on Unix
+except ImportError:
+    _rl = None  # Windows: readline not available
 from pathlib import Path
 from typing import Callable, Awaitable
 
@@ -265,6 +268,7 @@ class IntentParser:
             "mode":     ("mode",     {"arg1": parts[1].lower() if len(parts) > 1 else ""}),
             "image":    ("image",    {"arg1": parts[1] if len(parts) > 1 else ""}),
             "images":   ("images",   {}),
+            "projects": ("projects", {}),
         }
         return mapping.get(name, ("unknown", {"raw": cmd}))
 
@@ -273,13 +277,37 @@ class IntentParser:
 def print_banner():
     cols = shutil.get_terminal_size().columns
     print()
-    print(f"  {c('⚗', BMAGENTA)} {c('Vipin Lab', BOLD, BMAGENTA)}  {c('v1.3', DIM)}")
+    print(f"  {c('⚗', BMAGENTA)} {c('Vipin Lab', BOLD, BMAGENTA)}  {c('v1.4', DIM)}")
     print(c("  Autonomous Research System — Phenomenon-Driven Discovery", DIM))
     print(hr())
     print(f"  {c('Type your research question or use /help for commands.', DIM)}")
     print(f"  {c('Examples:', DIM)}  {c('find new ideas in LLM4Rec', ITALIC, DIM)}  ·  "
           f"{c('transfer conformal prediction to recommendation', ITALIC, DIM)}")
     print()
+    _show_startup_context()
+
+
+def _show_startup_context():
+    """Show mailbox messages and active projects on startup."""
+    try:
+        from lab.context.project_scanner import load_project_context, read_mailbox, mark_messages_read
+        # Mailbox
+        msgs = read_mailbox("vlab")
+        if msgs:
+            print(f"  {c('📬 Mailbox', BOLD, BYELLOW)}  {c(f'{len(msgs)} unread', DIM)}")
+            for m in msgs[:3]:
+                print(f"  {c('·', DIM)} {c(m.get('from', '?'), BCYAN)}: {m.get('subject', '')[:60]}")
+            mark_messages_read("vlab")
+            print()
+        # Active projects
+        ctx = load_project_context()
+        if ctx.projects:
+            print(f"  {c('Active Projects', BOLD, BCYAN)}")
+            for p in ctx.projects[:4]:
+                print(f"  {c(f'P{p.priority}', DIM)} {c(p.name, BOLD)}  {c(p.phase[:40], DIM)}")
+            print()
+    except Exception:
+        pass
 
 
 def print_idea_card(idea: dict, index: int = 0):
@@ -295,9 +323,11 @@ def print_idea_card(idea: dict, index: int = 0):
     icon = origin_icons.get(origin, "💡")
 
     print(f"\n  {c(f'#{index+1}', DIM)} {icon}  {c(idea.get('title', 'Untitled'), BOLD)}")
+    novelty = idea.get('novelty_score', 0)
+    feasibility = idea.get('feasibility_score', 0)
     print(f"     {c(status, sc)}  "
-          f"{c('N:', DIM)}{c(f\"{idea.get('novelty_score', 0):.1f}\", BYELLOW)}  "
-          f"{c('F:', DIM)}{c(f\"{idea.get('feasibility_score', 0):.1f}\", BGREEN)}  "
+          f"{c('N:', DIM)}{c(f'{novelty:.1f}', BYELLOW)}  "
+          f"{c('F:', DIM)}{c(f'{feasibility:.1f}', BGREEN)}  "
           f"{c(idea.get('id', '')[:8], DIM)}")
     if idea.get("phenomenon"):
         print(f"     {c('↳', DIM)} {wrap(idea['phenomenon'][:100], indent='').strip()}")
@@ -432,6 +462,8 @@ class VlabREPL:
 
     def _setup_readline(self):
         """Configure readline for history and completion."""
+        if _rl is None:
+            return
         try:
             history_file = Path.home() / ".vlab_history"
             if history_file.exists():
@@ -456,6 +488,8 @@ class VlabREPL:
             pass  # readline not available on all platforms
 
     def _save_history(self):
+        if _rl is None:
+            return
         try:
             _rl.write_history_file(str(Path.home() / ".vlab_history"))
         except Exception:
@@ -802,6 +836,24 @@ class VlabREPL:
             print(f"  {c(str(i) + '.', DIM)} {p}")
         print()
 
+    def _handle_projects(self):
+        """Show active projects from shared memory."""
+        try:
+            from lab.context.project_scanner import load_project_context
+            ctx = load_project_context()
+            if not ctx.projects:
+                print(c("\n  No active projects found in shared memory.\n", DIM))
+                return
+            print(f"\n  {c('Active Projects', BOLD, BCYAN)}")
+            print(hr("·"))
+            for p in ctx.projects:
+                print(f"  {c(f'P{p.priority}', BYELLOW)} {c(p.name, BOLD)}")
+                print(f"     {c('Direction:', DIM)} {p.direction[:70]}")
+                print(f"     {c('Phase:', DIM)} {c(p.phase, BCYAN)}  {c(p.status[:60], DIM)}")
+            print()
+        except Exception as e:
+            print(c(f"\n  ✗ Could not load projects: {e}\n", BRED))
+
     def _build_message_with_images(self, text: str) -> dict:
         """
         Build a user message dict. If images are pending, include them as
@@ -875,6 +927,8 @@ class VlabREPL:
             self._handle_image(args)
         elif intent == "images":
             self._handle_images()
+        elif intent == "projects":
+            self._handle_projects()
         else:
             raw = args.get("raw", "")
             print(f"\n  {c('?', BYELLOW)} I didn't understand: {c(raw[:60], DIM)}")

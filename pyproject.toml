@@ -32,6 +32,10 @@ latex = ["pylatexenc>=2.10"]
 vlab = "cli.main:main"
 vlab-api = "api.server:app"
 
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["cli*", "lab*", "api*"]
+
 [build-system]
 requires = ["setuptools>=75.0"]
 build-backend = "setuptools.build_meta"

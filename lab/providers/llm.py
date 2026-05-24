@@ -72,15 +72,10 @@ class LLMProvider:
         max_tokens: int = 8192,
         system: str | None = None,
     ) -> str:
-        """Send a completion request. Returns response text.
-
-        Messages may contain vision content blocks (Anthropic format).
-        For OpenAI-compatible providers, image blocks are silently stripped
-        since vision support varies by model.
-        """
+        """Send a completion request. Returns response text."""
         if model.provider == "anthropic":
             return await self._anthropic(model, messages, temperature, max_tokens, system)
-        elif model.provider in ("openai", "openrouter"):
+        elif model.provider in ("openai", "openrouter", "deepseek"):
             return await self._openai(model, messages, temperature, max_tokens, system)
         raise ValueError(f"Unknown provider: {model.provider}")
 
@@ -92,8 +87,10 @@ class LLMProvider:
         max_tokens: int,
         system: str | None,
     ) -> str:
+        key = model.api_key or self.config.anthropic_key
+        base = (model.base_url or os.environ.get("ANTHROPIC_BASE_URL", "https://api.anthropic.com/v1")).rstrip("/")
         headers = {
-            "x-api-key": self.config.anthropic_key,
+            "x-api-key": key,
             "anthropic-version": "2023-06-01",
             "content-type": "application/json",
         }
@@ -106,11 +103,11 @@ class LLMProvider:
         if system:
             payload["system"] = system
 
-        for attempt in range(3):
+        for attempt in range(5):
             try:
                 async with httpx.AsyncClient(timeout=180.0) as client:
                     r = await client.post(
-                        "https://api.anthropic.com/v1/messages",
+                        f"{base}/messages",
                         headers=headers,
                         json=payload,
                     )
@@ -118,9 +115,10 @@ class LLMProvider:
                     data = r.json()
                     return data["content"][0]["text"]
             except (httpx.HTTPStatusError, httpx.TimeoutException) as e:
-                if attempt == 2:
+                if attempt == 4:
                     raise
-                await asyncio.sleep(2 ** attempt)
+                wait = [3, 8, 15, 30][attempt]
+                await asyncio.sleep(wait)
         return ""
 
     async def _openai(
@@ -131,16 +129,23 @@ class LLMProvider:
         max_tokens: int,
         system: str | None,
     ) -> str:
-        base = (
-            "https://openrouter.ai/api/v1"
-            if model.provider == "openrouter"
-            else "https://api.openai.com/v1"
-        )
-        key = (
-            os.environ.get("OPENROUTER_API_KEY", "")
-            if model.provider == "openrouter"
-            else self.config.openai_key
-        )
+        if model.base_url:
+            base = model.base_url.rstrip("/")
+        elif model.provider == "openrouter":
+            base = "https://openrouter.ai/api/v1"
+        elif model.provider == "deepseek":
+            base = "https://api.deepseek.com/v1"
+        else:
+            base = "https://api.openai.com/v1"
+
+        if model.api_key:
+            key = model.api_key
+        elif model.provider == "openrouter":
+            key = os.environ.get("OPENROUTER_API_KEY", "")
+        elif model.provider == "deepseek":
+            key = os.environ.get("DEEPSEEK_API_KEY", "")
+        else:
+            key = self.config.openai_key
         all_messages = []
         if system:
             all_messages.append({"role": "system", "content": system})
@@ -157,7 +162,7 @@ class LLMProvider:
             else:
                 all_messages.append(msg)
 
-        for attempt in range(3):
+        for attempt in range(5):
             try:
                 async with httpx.AsyncClient(timeout=180.0) as client:
                     r = await client.post(
@@ -169,9 +174,10 @@ class LLMProvider:
                     r.raise_for_status()
                     return r.json()["choices"][0]["message"]["content"]
             except (httpx.HTTPStatusError, httpx.TimeoutException):
-                if attempt == 2:
+                if attempt == 4:
                     raise
-                await asyncio.sleep(2 ** attempt)
+                wait = [3, 8, 15, 30][attempt]
+                await asyncio.sleep(wait)
         return ""
 
     async def complete_parallel(

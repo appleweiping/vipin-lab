@@ -69,14 +69,46 @@ Output JSON array:
 """
 
 
+PHENOMENON_LLM_ONLY_PROMPT = """You are a world-class research scientist and domain expert.
+
+Domain: {domain}
+{project_context}
+
+Your task: identify 3-5 genuine research phenomena in this domain — observed anomalies, contradictions, unexplained results, and performance gaps that are known to researchers but not yet well-explained.
+
+A phenomenon is NOT a research gap ("nobody has done X"). A phenomenon IS:
+- "Method X consistently underperforms on Y despite theoretical guarantees"
+- "Metric A and Metric B diverge in domain Z — models that rank well on A rank poorly on B"
+- "Model size doesn't help beyond N for task T, but nobody knows why"
+- "Technique X works in domain A but fails in domain B despite similar structure"
+- "Baseline Y is surprisingly competitive with recent methods on metric Z"
+
+Draw on your knowledge of the field. Be specific and concrete.
+
+Output a JSON array:
+[{{
+  "description": "precise description of the anomaly",
+  "evidence": ["known paper or result 1", "known paper or result 2"],
+  "unexplained_by": ["existing method 1", "existing method 2"],
+  "potential_causes": ["hypothesis 1", "hypothesis 2", "hypothesis 3"],
+  "severity": 0.0-1.0,
+  "research_potential": "why this is worth investigating"
+}}]
+"""
+
+
 class PhenomenonObservatory:
     def __init__(self, config: LabConfig, llm: LLMProvider, lit: LiteratureProvider):
         self.config = config
         self.llm = llm
         self.lit = lit
 
-    async def scan(self, domain: str, n_papers: int = 30) -> list[Phenomenon]:
-        """Scan a domain for phenomena. Returns ranked list."""
+    async def scan(self, domain: str, n_papers: int = 30, project_context: str = "") -> list[Phenomenon]:
+        """Scan a domain for phenomena. Falls back to pure LLM if no papers found or no API key."""
+        # Skip Semantic Scholar if no API key — avoid 30s timeouts on 5 parallel requests
+        if not self.config.semantic_scholar_key:
+            return await self._scan_llm_only(domain, project_context)
+
         # Gather recent papers from multiple angles
         queries = [
             f"{domain} limitations failure cases",
@@ -89,7 +121,7 @@ class PhenomenonObservatory:
         papers = sorted(papers, key=lambda p: p.citation_count, reverse=True)[:n_papers]
 
         if not papers:
-            return []
+            return await self._scan_llm_only(domain, project_context)
 
         paper_text = self.lit.format_for_prompt(papers, max_papers=20)
 
@@ -143,6 +175,56 @@ class PhenomenonObservatory:
             result.append(p)
 
         # Sort by severity
+        result.sort(key=lambda x: x.severity, reverse=True)
+        return result[:self.config.max_phenomena_per_session]
+
+    async def _scan_llm_only(self, domain: str, project_context: str = "") -> list[Phenomenon]:
+        """Pure LLM fallback when Semantic Scholar returns no papers."""
+        ctx_block = f"\nProject context:\n{project_context}\n" if project_context else ""
+        response = await self.llm.complete(
+            self.config.architect(),
+            [{"role": "user", "content": PHENOMENON_LLM_ONLY_PROMPT.format(
+                domain=domain, project_context=ctx_block
+            )}],
+            temperature=0.5,
+            max_tokens=4096,
+        )
+        raw_phenomena = self._parse_json_array(response)
+        if not raw_phenomena:
+            return []
+
+        # Score and rank
+        phenomena_text = json.dumps(raw_phenomena, indent=2)
+        ranking_response = await self.llm.complete(
+            self.config.auditor(),
+            [{"role": "user", "content": PHENOMENON_RANKING_PROMPT.format(
+                domain=domain, phenomena=phenomena_text
+            )}],
+            temperature=0.2,
+            max_tokens=2048,
+        )
+        rankings = self._parse_json_array(ranking_response)
+
+        result = []
+        import uuid
+        for i, raw in enumerate(raw_phenomena):
+            rank = next((r for r in rankings if r.get("id") == i), {})
+            severity = rank.get("severity", 5) / 10.0
+            verdict = rank.get("verdict", "pursue")
+            if verdict == "skip" or severity < self.config.phenomenon_severity_threshold:
+                continue
+            p = Phenomenon(
+                id=str(uuid.uuid4())[:8],
+                domain=domain,
+                description=raw.get("description", ""),
+                evidence=raw.get("evidence", []),
+                unexplained_by=raw.get("unexplained_by", []),
+                potential_causes=raw.get("potential_causes", []),
+                severity=severity,
+                source_papers=[],
+            )
+            result.append(p)
+
         result.sort(key=lambda x: x.severity, reverse=True)
         return result[:self.config.max_phenomena_per_session]
 

@@ -1,5 +1,28 @@
 # CLAUDE.md — Vipin Lab
 
+## Session Start (mandatory)
+
+On every session start, run these in order:
+1. `memory_smart_search` with the current task description (agentmemory MCP)
+2. Read `D:\research\Vipin's Knowledgebase\memory\INDEX.md` for shared context
+3. Check mailbox: `D:\devtools\agent-hub\state\messages-vlab.json` for unread messages
+
+After significant work, call `memory_save` with key decisions and findings.
+
+## Agent Identity
+
+- **Name**: vlab (Vipin Lab)
+- **Role**: Autonomous research pipeline — phenomenon discovery, kill-first ideation, evidence-gated paper writing
+- **Mailbox**: `D:\devtools\agent-hub\state\messages-vlab.json`
+- **Shared memory**: `D:\research\Vipin's Knowledgebase\memory\`
+- **agentmemory URL**: `http://localhost:3111` (env: `AGENTMEMORY_URL`)
+
+## Multi-Agent Rules
+
+- Follow `D:\research\Vipin's Knowledgebase\AGENTS.md` for collaboration rules
+- Write durable findings to `D:\research\Vipin's Knowledgebase\memory\` after each pipeline phase
+- Do not store secrets or API keys in memory
+
 Autonomous research system. Phenomenon-driven. Kill-first. Evidence-gated.
 
 ## Quick Start

@@ -103,9 +103,11 @@ def print_idea(idea, index: int = 0):
     icon = origin_icons.get(idea.get("origin", ""), "💡")
 
     print(f"\n  {c(f'#{index+1}', BOLD, DIM)} {icon} {c(idea.get('title', 'Untitled'), BOLD)}")
+    novelty = idea.get("novelty_score", 0)
+    feasibility = idea.get("feasibility_score", 0)
     print(f"     {c('Status:', DIM)} {c(idea.get('status', '?'), sc)}  "
-          f"{c('Novelty:', DIM)} {c(f\"{idea.get('novelty_score', 0):.1f}/10\", BYELLOW)}  "
-          f"{c('Feasibility:', DIM)} {c(f\"{idea.get('feasibility_score', 0):.1f}/10\", BGREEN)}")
+          f"{c('Novelty:', DIM)} {c(f'{novelty:.1f}/10', BYELLOW)}  "
+          f"{c('Feasibility:', DIM)} {c(f'{feasibility:.1f}/10', BGREEN)}")
     if idea.get("phenomenon"):
         print(f"     {c('Phenomenon:', DIM)} {wrap(idea['phenomenon'][:120], indent='').strip()}")
     if idea.get("hypothesis"):
