@@ -1,0 +1,34 @@
+[project]
+name = "vipin-lab"
+version = "1.0.0"
+description = "Autonomous research lab: phenomenon-driven discovery, cross-domain transfer, kill-first ideation, evidence-gated pipeline"
+requires-python = ">=3.11"
+dependencies = [
+    "anthropic>=0.40.0",
+    "openai>=1.50.0",
+    "httpx>=0.27.0",
+    "pydantic>=2.9.0",
+    "python-dotenv>=1.0.0",
+    "rich>=13.9.0",
+    "typer>=0.12.0",
+    "arxiv>=2.1.0",
+    "semanticscholar>=0.8.0",
+    "aiofiles>=24.1.0",
+    "jinja2>=3.1.0",
+    "pyyaml>=6.0.0",
+    "numpy>=1.26.0",
+    "scipy>=1.13.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0", "ruff>=0.6", "mypy>=1.11"]
+
+[project.scripts]
+vlab = "cli.main:app"
+
+[build-system]
+requires = ["setuptools>=75.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.ruff]
+line-length = 100
