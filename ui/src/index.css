@@ -1,0 +1,52 @@
+﻿*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --bg:         #0b0d12;
+  --bg-panel:   #111318;
+  --bg-hover:   #181c24;
+  --bg-active:  #1c2030;
+  --border:     #222736;
+  --border-hi:  #2e3550;
+  --text:       #dde2f0;
+  --text-dim:   #636d94;
+  --text-mute:  #363d58;
+  --accent:     #5b8af5;
+  --accent-lo:  #1a2550;
+  --green:      #4ade80;
+  --green-lo:   #0f2318;
+  --yellow:     #fbbf24;
+  --yellow-lo:  #261e0a;
+  --red:        #f87171;
+  --red-lo:     #260f0f;
+  --purple:     #a78bfa;
+  --purple-lo:  #1a1530;
+  --cyan:       #22d3ee;
+  --cyan-lo:    #0a1e24;
+  --orange:     #fb923c;
+  --orange-lo:  #261508;
+  --radius:     8px;
+  --radius-lg:  14px;
+  --font:       'Inter', system-ui, -apple-system, sans-serif;
+  --mono:       'JetBrains Mono', 'Fira Code', monospace;
+}
+
+html, body, #root { height: 100%; background: var(--bg); color: var(--text); font-family: var(--font); font-size: 14px; line-height: 1.6; -webkit-font-smoothing: antialiased; }
+::-webkit-scrollbar { width: 5px; height: 5px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border-hi); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: var(--text-mute); }
+.md h1,.md h2,.md h3 { color: var(--text); font-weight: 600; margin: .9em 0 .3em; }
+.md h1 { font-size: 1.25em; } .md h2 { font-size: 1.1em; } .md h3 { font-size: 1em; }
+.md p { margin: .4em 0; }
+.md ul,.md ol { padding-left: 1.4em; margin: .3em 0; }
+.md li { margin: .15em 0; }
+.md code { font-family: var(--mono); font-size: .82em; background: var(--bg-active); border: 1px solid var(--border); border-radius: 4px; padding: .1em .35em; color: var(--cyan); }
+.md pre { background: var(--bg-active); border: 1px solid var(--border); border-radius: var(--radius); padding: .8em 1em; overflow-x: auto; margin: .5em 0; }
+.md pre code { background: none; border: none; padding: 0; color: var(--text); }
+.md blockquote { border-left: 3px solid var(--accent); padding-left: .8em; color: var(--text-dim); }
+.md table { border-collapse: collapse; width: 100%; margin: .5em 0; }
+.md th,.md td { border: 1px solid var(--border); padding: .35em .65em; text-align: left; }
+.md th { background: var(--bg-active); font-weight: 600; }
+.md a { color: var(--accent); text-decoration: none; }
+.md a:hover { text-decoration: underline; }
+.md hr { border: none; border-top: 1px solid var(--border); margin: .7em 0; }

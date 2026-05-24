@@ -459,6 +459,11 @@ def status():
 
 
 def main():
+    # No args → launch interactive REPL
+    if len(sys.argv) == 1:
+        from cli.repl import run_repl
+        run_repl()
+        return
     app()
 
 

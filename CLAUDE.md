@@ -9,14 +9,23 @@ cd D:\research\vipin-lab
 pip install -e .
 cp .env.example .env   # add ANTHROPIC_API_KEY
 
-vlab discover "LLM4Rec"                          # discover phenomena → ideas
-vlab extend "LLM4Rec" --method "..." --limits "..."  # extend existing project
-vlab transfer "conformal prediction" "LLM4Rec"   # cross-domain transfer
-vlab pipeline <idea_id>                          # run full pipeline
-vlab resume <idea_id>                            # resume after experiments
-vlab ideas                                       # list all ideas
-vlab sessions                                    # list sessions
-vlab status                                      # check API keys
+# Option A: one command (Windows)
+start.cmd              # opens API on :8001 + UI on :5174
+
+# Option B: manual
+uvicorn api.server:app --reload --port 8001   # API backend
+cd ui && npm run dev                           # React UI (http://localhost:5174)
+vlab                                           # CLI interactive REPL (no args)
+
+# Subcommand mode
+vlab discover "LLM4Rec"
+vlab extend "LLM4Rec" --method "..." --limits "..."
+vlab transfer "conformal prediction" "LLM4Rec"
+vlab pipeline <idea_id>
+vlab resume <idea_id>
+vlab ideas
+vlab sessions
+vlab status
 ```
 
 ## Architecture

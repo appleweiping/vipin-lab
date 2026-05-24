@@ -1,6 +1,6 @@
 [project]
 name = "vipin-lab"
-version = "1.2.0"
+version = "1.4.0"
 description = "Autonomous research lab: phenomenon-driven discovery, cross-domain transfer, kill-first ideation, evidence-gated pipeline"
 requires-python = ">=3.11"
 dependencies = [
@@ -18,6 +18,9 @@ dependencies = [
     "pyyaml>=6.0.0",
     "numpy>=1.26.0",
     "scipy>=1.13.0",
+    "fastapi>=0.115.0",
+    "uvicorn>=0.30.0",
+    "sse-starlette>=2.1.0",
 ]
 
 [project.optional-dependencies]
@@ -27,6 +30,7 @@ latex = ["pylatexenc>=2.10"]
 
 [project.scripts]
 vlab = "cli.main:main"
+vlab-api = "api.server:app"
 
 [build-system]
 requires = ["setuptools>=75.0"]
