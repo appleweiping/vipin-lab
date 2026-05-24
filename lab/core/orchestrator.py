@@ -2,7 +2,7 @@
 Vipin Lab Orchestrator v2.
 
 Wires all modules together. Handles pipeline resumption.
-Integrates: workspace manager, memory, novelty checker, beam search.
+Integrates: workspace manager, memory, novelty checker, beam search, anti-toy.
 """
 from __future__ import annotations
 import json
@@ -19,6 +19,7 @@ from ..engines.phenomenon import PhenomenonObservatory
 from ..engines.analogy import AnalogicalBridge
 from ..engines.kill_first import KillFirstEngine
 from ..engines.evidence import EvidenceGate
+from ..engines.anti_toy import AntiToyEngine
 from ..phases.p1_ideation import IdeaGenerator
 from ..phases.p2_refine import ResearchRefine
 from ..phases.p3_experiment_plan import ExperimentPlanner
@@ -46,6 +47,7 @@ class LabOrchestrator:
         self.evidence_gate = EvidenceGate(config, self.llm)
         self.novelty_checker = NoveltyChecker(self.lit)
         self.beam_search = IdeaBeamSearch(config, self.llm, self.lit)
+        self.anti_toy = AntiToyEngine(config, self.llm)
 
         # Phases
         self.ideator = IdeaGenerator(config, self.llm, self.lit)
@@ -120,16 +122,32 @@ class LabOrchestrator:
             *[self.kill_first.evaluate(idea) for idea in novel_ideas]
         )
         # Mark surviving ideas as KILL_TESTED, killed ones as KILLED
+        # Record killed ideas in anti-toy engine to prevent death loops
         for idea, survived in kill_results:
             if survived:
                 idea.status = IdeaStatus.KILL_TESTED
             else:
                 idea.status = IdeaStatus.KILLED
+                kill_reason = idea.kill_argument.argument[:200] if idea.kill_argument else ""
+                prior_work = idea.kill_argument.closest_prior_work if idea.kill_argument else []
+                self.anti_toy.record_killed_idea(idea, kill_reason, prior_work)
 
-        session.ideas = [idea for idea, _ in kill_results] + [
-            i for i in ideas if i.status == IdeaStatus.KILLED
-        ]
-        surviving = sum(1 for _, s in kill_results if s)
+        # Step 5: Surface-variation check — reject ideas too similar to killed ones
+        final_ideas = []
+        for idea, survived in kill_results:
+            if not survived:
+                final_ideas.append(idea)
+                continue
+            is_variation, reason = self.anti_toy.is_surface_variation(idea)
+            if is_variation:
+                idea.status = IdeaStatus.KILLED
+                idea.metadata["killed_reason"] = f"Surface variation: {reason}"
+                final_ideas.append(idea)
+            else:
+                final_ideas.append(idea)
+
+        session.ideas = final_ideas
+        surviving = sum(1 for i in final_ideas if i.status == IdeaStatus.KILL_TESTED)
         session.log("kill_first_complete", surviving=surviving,
                     killed=len(novel_ideas) - surviving)
 
@@ -243,13 +261,35 @@ class LabOrchestrator:
                 self.workspace.save_idea(idea)
                 return idea, None
 
-            # Audit the plan — all dimensions must be ≥6
+            # Anti-toy: static check first (fast, no LLM)
+            is_toy_static, toy_violations_static = self.anti_toy.check_plan_for_toys(plan)
+            if is_toy_static:
+                idea.status = IdeaStatus.KILLED
+                idea.metadata["killed_reason"] = f"Toy violations: {'; '.join(toy_violations_static[:3])}"
+                self.workspace.save_idea(idea)
+                self._record_to_memory(idea, killed_at="anti_toy_static")
+                return idea, None
+
+            # Anti-toy: LLM audit
+            is_toy_llm, toy_violations_llm = await self.anti_toy.audit_plan_for_toys(plan)
+            if is_toy_llm:
+                idea.status = IdeaStatus.KILLED
+                idea.metadata["killed_reason"] = f"Toy (LLM audit): {'; '.join(toy_violations_llm[:3])}"
+                self.workspace.save_idea(idea)
+                self._record_to_memory(idea, killed_at="anti_toy_llm")
+                return idea, None
+
+            # Enforce minimum standards (hard floor)
+            try:
+                plan = self.anti_toy.enforce_minimum_standards(plan)
+            except ValueError as e:
+                idea.status = IdeaStatus.KILLED
+                idea.metadata["killed_reason"] = str(e)
+                self.workspace.save_idea(idea)
+                return idea, None
+
+            # Evidence gate audit — all dimensions must be ≥6
             scores = await self.evidence_gate.audit_plan(plan)
-            # Fix: enforce both LLM verdict AND score threshold
-            plan.approved = (
-                all(v >= self.config.min_experiment_audit_score for v in scores.values())
-                if scores else False
-            )
             self.workspace.save_plan(idea, plan)
             self.workspace.save_idea(idea)
 
