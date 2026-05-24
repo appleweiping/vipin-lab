@@ -31,7 +31,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from lab.core.config import LabConfig
 from lab.core.orchestrator import LabOrchestrator
-from lab.core.progress import set_reporter, ProgressReporter, ProgressEvent
+from lab.core.progress import ProgressReporter, ProgressEvent
 
 app = FastAPI(title="Vipin Lab API", version="1.3.0")
 app.add_middleware(
@@ -138,9 +138,9 @@ async def discover(req: DiscoverRequest):
     async def stream() -> AsyncGenerator[str, None]:
         events: asyncio.Queue[ProgressEvent | None] = asyncio.Queue()
 
+        # Per-request reporter — not global, avoids concurrent request interference
         reporter = ProgressReporter(verbose=True)
         reporter._callbacks = [lambda e: events.put_nowait(e)]
-        set_reporter(reporter)
 
         yield sse_progress("start", f"Scanning {req.domain} for phenomena")
 
@@ -326,11 +326,15 @@ async def list_sessions():
     for f in sorted(workspace.glob("*/session.json"), reverse=True)[:50]:
         try:
             d = json.loads(f.read_text(encoding="utf-8"))
+            ideas = d.get("ideas", [])
             sessions.append({
                 "id": d.get("id"), "mode": d.get("mode"),
                 "domain": d.get("domain"), "created_at": d.get("created_at"),
-                "ideas_count": len(d.get("ideas", [])),
-                "surviving": sum(1 for i in d.get("ideas", []) if i.get("kill_survived")),
+                "ideas_count": len(ideas),
+                "surviving": sum(1 for i in ideas if i.get("kill_survived")),
+                # include counts for sidebar display
+                "phenomena_count": len(d.get("phenomena", [])),
+                "analogies_count": len(d.get("analogies", [])),
             })
         except Exception:
             pass

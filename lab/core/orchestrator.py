@@ -399,15 +399,42 @@ class LabOrchestrator:
                     "status": i.status.value,
                     "novelty_score": i.novelty_score,
                     "feasibility_score": i.feasibility_score,
-                    "phenomenon": i.phenomenon[:200],
-                    "hypothesis": i.hypothesis[:200],
+                    "phenomenon": i.phenomenon[:300],
+                    "hypothesis": i.hypothesis[:300],
+                    "proposed_method": i.proposed_method[:400],
+                    "expected_contribution": i.expected_contribution[:300],
                     "kill_survived": i.kill_argument.survived if i.kill_argument else None,
+                    "kill_argument": i.kill_argument.argument[:400] if i.kill_argument else None,
+                    "kill_rebuttal": i.kill_argument.rebuttal[:400] if i.kill_argument else None,
                     "workspace": i.workspace_dir,
+                    "id_full": i.id,
                 }
                 for i in session.ideas
             ],
-            "phenomena_count": len(session.phenomena),
-            "analogies_count": len(session.analogies),
+            "phenomena": [
+                {
+                    "id": p.id,
+                    "description": p.description,
+                    "severity": p.severity,
+                    "evidence": p.evidence[:3],
+                    "unexplained_by": p.unexplained_by[:3],
+                    "potential_causes": p.potential_causes[:3],
+                }
+                for p in session.phenomena
+            ],
+            "analogies": [
+                {
+                    "source_domain": a.source_domain,
+                    "target_domain": a.target_domain,
+                    "source_problem": a.source_problem,
+                    "target_problem": a.target_problem,
+                    "structural_similarity": a.structural_similarity,
+                    "transfer_method": a.transfer_method,
+                    "adaptation_required": a.adaptation_required,
+                    "confidence": a.confidence,
+                }
+                for a in session.analogies
+            ],
             "audit_trail": session.audit_trail,
         }
         path.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")

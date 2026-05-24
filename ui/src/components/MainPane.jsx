@@ -40,6 +40,11 @@ export default function MainPane({ session, onResult }) {
   const handleSubmit = async () => {
     const q = input.trim()
     if (!q || loading) return
+    // Validate second input for modes that require it
+    if (mode === "transfer" && !input2.trim()) {
+      setError("Target domain is required for Transfer mode.")
+      return
+    }
     setError(null)
     setLoading(true)
     setProgress([])
@@ -56,13 +61,16 @@ export default function MainPane({ session, onResult }) {
 
       for await (const { event, data } of stream) {
         if (event === "progress") {
-          setProgress(p => [...p.slice(-8), `${data.phase}: ${data.step}`])
+          // Safe rendering: guard against missing fields
+          const phase = data?.phase || ""
+          const step = data?.step || ""
+          if (phase || step) setProgress(p => [...p.slice(-8), `${phase}${phase && step ? ": " : ""}${step}`])
         } else if (event === "done") {
           onResult(data)
           setInput("")
           setInput2("")
         } else if (event === "error") {
-          setError(data.message)
+          setError(data?.message || "Unknown error")
         }
       }
     } catch (e) {
@@ -75,6 +83,12 @@ export default function MainPane({ session, onResult }) {
 
   const handleKey = (e) => {
     if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleSubmit() }
+  }
+
+  // Clear input2 when switching modes to avoid stale values
+  const handleModeChange = (newMode) => {
+    setMode(newMode)
+    setInput2("")
   }
 
   const currentMode = MODES.find(m => m.id === mode)
@@ -103,7 +117,7 @@ export default function MainPane({ session, onResult }) {
                 <button key={m.id}
                   className={`mode-chip ${mode === m.id ? "mode-chip--active" : ""}`}
                   style={mode === m.id ? { borderColor: m.color, color: m.color, background: m.color + "18" } : {}}
-                  onClick={() => setMode(m.id)}>
+                  onClick={() => handleModeChange(m.id)}>
                   {m.icon} {m.label}
                 </button>
               ))}
@@ -149,7 +163,7 @@ export default function MainPane({ session, onResult }) {
             <button key={m.id}
               className={`mode-btn ${mode === m.id ? "mode-btn--active" : ""}`}
               style={mode === m.id ? { borderColor: m.color, color: m.color } : {}}
-              onClick={() => setMode(m.id)} disabled={loading} title={m.label}>
+              onClick={() => handleModeChange(m.id)} disabled={loading} title={m.label}>
               <span>{m.icon}</span>
               <span className="mode-btn-label">{m.label}</span>
             </button>
@@ -181,3 +195,4 @@ export default function MainPane({ session, onResult }) {
     </div>
   )
 }
+
